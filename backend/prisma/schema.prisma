@@ -1,0 +1,216 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String         @id @default(uuid())
+  email        String         @unique
+  passwordHash String
+  name         String
+  role         String         @default("DEVELOPER") // OWNER, ADMIN, DEVELOPER, VIEWER
+  avatarUrl    String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  teamMembers  TeamMember[]
+  auditLogs    AuditLog[]
+  notifications Notification[]
+}
+
+model Team {
+  id        String       @id @default(uuid())
+  name      String
+  slug      String       @unique
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  members   TeamMember[]
+  projects  Project[]
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  userId    String
+  role      String   @default("DEVELOPER")
+  createdAt DateTime @default(now())
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+}
+
+model Project {
+  id           String        @id @default(uuid())
+  name         String
+  description  String?
+  teamId       String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  apis         ApiMonitor[]
+  environments Environment[]
+}
+
+model Environment {
+  id          String                @id @default(uuid())
+  name        String
+  projectId   String
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  project     Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  variables   EnvironmentVariable[]
+}
+
+model EnvironmentVariable {
+  id            String      @id @default(uuid())
+  environmentId String
+  key           String
+  value         String
+  isSecret      Boolean     @default(false)
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+}
+
+model ApiMonitor {
+  id                  String             @id @default(uuid())
+  projectId           String
+  name                String
+  description         String?
+  url                 String
+  method              String             @default("GET")
+  headers             String?            // JSON stringified headers
+  queryParams         String?            // JSON stringified params
+  body                String?            // JSON stringified body
+  authType            String             @default("NONE") // NONE, BEARER, API_KEY, BASIC
+  authConfig          String?            // JSON stringified auth config
+  intervalSeconds     Int                @default(60)
+  timeoutMs           Int                @default(5000)
+  expectedStatusCode  Int                @default(200)
+  expectedResponseMs  Int                @default(1000)
+  validationRules     String?            // JSON rules
+  isPaused            Boolean            @default(false)
+  status              String             @default("HEALTHY") // HEALTHY, DEGRADED, DOWN, PAUSED
+  consecutiveFailures Int                @default(0)
+  lastCheckedAt       DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  project             Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  checks              MonitoringResult[]
+  incidents           Incident[]
+  sslCertificate      SslCertificate?
+  alerts              AlertConfig[]
+  statusPageServices  StatusPageService[]
+}
+
+model MonitoringResult {
+  id                  String     @id @default(uuid())
+  apiId               String
+  timestamp           DateTime   @default(now())
+  isSuccess           Boolean
+  statusCode          Int?
+  responseTimeMs      Int
+  dnsLookupTimeMs     Int        @default(0)
+  tcpConnectTimeMs    Int        @default(0)
+  tlsHandshakeTimeMs  Int        @default(0)
+  serverProcessTimeMs Int        @default(0)
+  downloadTimeMs      Int        @default(0)
+  responseSizeByte    Int        @default(0)
+  responseBodySnippet String?
+  errorMessage        String?
+  api                 ApiMonitor @relation(fields: [apiId], references: [id], onDelete: Cascade)
+
+  @@index([apiId, timestamp])
+}
+
+model SslCertificate {
+  id            String     @id @default(uuid())
+  apiId         String     @unique
+  issuer        String?
+  validFrom     DateTime?
+  validTo       DateTime?
+  daysRemaining Int?
+  status        String     @default("HEALTHY") // HEALTHY, EXPIRING_SOON, EXPIRED
+  lastCheckedAt DateTime   @default(now())
+  api           ApiMonitor @relation(fields: [apiId], references: [id], onDelete: Cascade)
+}
+
+model Incident {
+  id               String          @id @default(uuid())
+  apiId            String
+  title            String
+  status           String          @default("INVESTIGATING") // INVESTIGATING, IDENTIFIED, MONITORING, RESOLVED
+  startedAt        DateTime        @default(now())
+  resolvedAt       DateTime?
+  durationSeconds  Int?
+  failedCheckCount Int             @default(1)
+  rootCause        String?
+  api              ApiMonitor      @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  events           IncidentEvent[]
+}
+
+model IncidentEvent {
+  id         String   @id @default(uuid())
+  incidentId String
+  status     String
+  message    String
+  createdAt  DateTime @default(now())
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+}
+
+model AlertConfig {
+  id                   String     @id @default(uuid())
+  apiId                String
+  type                 String     // API_DOWN, LATENCY_EXCEEDED, STATUS_CODE_CHANGE, SSL_EXPIRING
+  consecutiveThreshold Int        @default(3)
+  cooldownMinutes      Int        @default(15)
+  channelType          String     @default("EMAIL") // EMAIL, WEBHOOK, IN_APP
+  destination          String
+  isEnabled            Boolean    @default(true)
+  lastTriggeredAt      DateTime?
+  api                  ApiMonitor @relation(fields: [apiId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // INCIDENT, ALERT, RECOVERY, SYSTEM
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model StatusPage {
+  id          String              @id @default(uuid())
+  slug        String              @unique
+  name        String
+  description String?
+  isPublic    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  services    StatusPageService[]
+}
+
+model StatusPageService {
+  id           String     @id @default(uuid())
+  statusPageId String
+  apiId        String
+  displayName  String
+  statusPage   StatusPage @relation(fields: [statusPageId], references: [id], onDelete: Cascade)
+  api          ApiMonitor @relation(fields: [apiId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  resource  String
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
